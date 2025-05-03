@@ -1,130 +1,141 @@
-import mne.viz
 import numpy as np
-import warnings
-
 from scipy import signal
-
-warnings.filterwarnings('ignore')
-from matplotlib import pyplot as plt
+from scipy.linalg import eigh
 
 # MNE functions
-from mne import Epochs,find_events
-from mne.time_frequency import tfr_morlet
+from mne import Epochs, find_events
 from mne.io import read_raw_edf
 
-# Machine learning functions
-from sklearn.pipeline import make_pipeline
+# Machine learning
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn import metrics
 
+# Constants
 FREQ_N = 1024
 FREQUENCIES = [9, 10, 12, 15]
 
 def peak_psd(epoch, fs):
-    # Compute the PSD using Welch's method
     f, Pxx = signal.welch(epoch, fs, nperseg=FREQ_N)
-
-    # Limit to the desired frequency range [7, 30] Hz
     mask = (f >= 8.5) & (f <= 30.5)
     f_range = f[mask]
     Pxx_range = Pxx[mask]
-
-    # Find the peak frequency and its corresponding power within the range
     peak_freq = f_range[np.argmax(Pxx_range)]
-
     return peak_freq
 
+def trca(X):  # X shape: (n_trials, n_channels, n_samples)
+    n_trials, n_channels, n_samples = X.shape
+    S = np.zeros((n_channels, n_channels))
+
+    for i in range(n_trials - 1):
+        x1 = X[i] - X[i].mean(axis=1, keepdims=True)
+        for j in range(i + 1, n_trials):
+            x2 = X[j] - X[j].mean(axis=1, keepdims=True)
+            S += x1 @ x2.T + x2 @ x1.T
+
+    UX = X.transpose(1, 0, 2).reshape(n_channels, -1)
+    UX = UX - UX.mean(axis=1, keepdims=True)
+    Q = UX @ UX.T
+
+    eigvals, eigvecs = eigh(S, Q)
+    W = eigvecs[:, np.argsort(eigvals)[::-1]]
+    return W
+
+class PSDAClassifier(BaseEstimator, ClassifierMixin):
+    def __init__(self, fs, target_freqs):
+        self.fs = fs
+        self.target_freqs = target_freqs
+
+    def fit(self, X, y):
+        self.X_ = X
+        self.y_ = y
+        self.classes_ = np.unique(y)
+        return self
+
+    def predict(self, X):
+        preds = []
+        for epoch in X:
+            error = {freq: 0.0 for freq in self.target_freqs}
+            for ch in range(epoch.shape[0]):
+                peak_freq = peak_psd(epoch[ch], self.fs)
+                for freq in self.target_freqs:
+                    harmonics = [freq, freq * 2, freq / 2]
+                    distances = [abs(peak_freq - h) for h in harmonics]
+                    error[freq] += min(distances)
+            preds.append(min(error, key=error.get))
+        return np.array(preds)
+
+class TRCAClassifier(BaseEstimator, ClassifierMixin):
+    def __init__(self, fs, target_freqs):
+        self.fs = fs
+        self.target_freqs = target_freqs
+        self.filters_ = {}
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        for label in self.classes_:
+            trials = X[y == label]
+            W = trca(trials)
+            self.filters_[label] = W[:, 0]  # Keep first component
+        return self
+
+    def predict(self, X):
+        preds = []
+        for epoch in X:
+            error = {}
+            for label, w in self.filters_.items():
+                filtered = w.T @ epoch
+                peak_freq = peak_psd(filtered, self.fs)
+                harmonics = [label, label * 2, label / 2]
+                distances = [abs(peak_freq - h) for h in harmonics]
+                error[label] = min(distances)
+            preds.append(min(error, key=error.get))
+        return np.array(preds)
+
+# Dataset definition
 dataset = [
-    {
-        'subject': 1,
-        'session': 1,
-        'path': 'data/subject_1_fvep_led_training_1.EDF',
-    },
-    {
-        'subject': 1,
-        'session': 2,
-        'path': 'data/subject_1_fvep_led_training_2.EDF',
-    },
-    {
-        'subject': 2,
-        'session': 1,
-        'path': 'data/subject_2_fvep_led_training_1.EDF',
-    },
-    {
-        'subject': 2,
-        'session': 2,
-        'path': 'data/subject_2_fvep_led_training_2.EDF',
-    }
+    {'subject': 1, 'session': 1, 'path': 'data/subject_1_fvep_led_training_1.EDF'},
+    {'subject': 1, 'session': 2, 'path': 'data/subject_1_fvep_led_training_2.EDF'},
+    {'subject': 2, 'session': 1, 'path': 'data/subject_2_fvep_led_training_1.EDF'},
+    {'subject': 2, 'session': 2, 'path': 'data/subject_2_fvep_led_training_2.EDF'}
 ]
 
+# Processing loop
 for session in dataset:
     subject = session['subject']
     session_num = session['session']
     edf_file_path = session['path']
 
-    print(f"Processing Subject {subject}, Session {session_num}")
+    print(f"\nProcessing Subject {subject}, Session {session_num}")
     raw = read_raw_edf(edf_file_path, preload=True, verbose=False)
     fs = int(raw.info['sfreq'])
 
     events = find_events(raw, stim_channel='10', verbose=False)
 
-    classes = []
+    # Map stimulus order to FREQUENCIES
     for i in range(len(events)):
-        if i % 4 == 0:
-            events[i][2] = 3
-            classes.append(3)
-        elif i % 4 == 1:
-            events[i][2] = 2
-            classes.append(2)
-        elif i % 4 == 2:
-            events[i][2] = 1
-            classes.append(1)
-        elif i % 4 == 3:
-            events[i][2] = 0
-            classes.append(0)
+        events[i][2] = 3 - (i % 4)
 
     epochs = Epochs(raw, events=events, event_id=[0, 1, 2, 3],
                     tmin=0, tmax=7, baseline=None, preload=True,
-                    verbose=False, picks=[1,2,3,4,5,6,7,8])
-    CHANNELS_NUM = epochs.get_data().shape[1]
-    EPOCHS_NUM = epochs.get_data().shape[0]
+                    verbose=False, picks=[1, 2, 3, 4, 5, 6, 7, 8])
+
+    X = epochs.get_data()  # (n_epochs, n_channels, n_samples)
+    y = np.array([FREQUENCIES[event[2]] for event in epochs.events])
 
     # PSDA
-    # For each channel find the peak between 7-30Hz, then we compute the distance to target frequencies, as well as their closest harmonics (up and down). We choose the closest one.
+    psda = PSDAClassifier(fs=fs, target_freqs=FREQUENCIES)
+    psda.fit(X, y)
+    y_pred_psda = psda.predict(X)
 
-    y = []
-    y_pred = []
-    for epoch_id in range(EPOCHS_NUM):
-        epoch_target = FREQUENCIES[epochs.events[epoch_id][2]]
-        epoch = epochs.get_data()[epoch_id]
-        error = {freq: 0.0 for freq in FREQUENCIES}
-        for channel in range(CHANNELS_NUM):
-            peak_freq = peak_psd(epoch[channel], fs)
-            # Accumulate the error for each target frequency considering harmonics
-            for freq in FREQUENCIES:
-                harmonics = [freq, freq * 2, freq / 2]
-                distances = [abs(peak_freq - h) for h in harmonics]
+    # TRCA
+    trca_clf = TRCAClassifier(fs=fs, target_freqs=FREQUENCIES)
+    trca_clf.fit(X, y)
+    y_pred_trca = trca_clf.predict(X)
 
-                error[freq] += min(distances)
-            # plt.figure()
-            # plt.plot(epoch.T)
-            # plt.show()
-            #
-            # plt.figure()
-            # plt.psd(np.hanning(len(epoch[6].T))*epoch[6].T, NFFT=FREQ_N, Fs=fs)
-            # plt.title('Power Spectral Density of First epoch Wave')
-            # plt.xlim(0, 32)
-            # plt.show()
-        # print(error)
-        best_freq = min(error, key=error.get)
-        # print(epoch_target, best_freq)
-        #
-        # exit()
+    # Evaluation
+    print("True Labels:   ", y.tolist())
+    print("PSDA Predict:  ", y_pred_psda.tolist())
+    print("TRCA Predict:  ", y_pred_trca.tolist())
 
-        y.append(epoch_target)
-        y_pred.append(best_freq)
-
-    # Print the results
-    print("Target : ", y)
-    print("Predict: ", y_pred)
-    print("Classification Report:\n", metrics.accuracy_score(y, y_pred))
-
+    print(f"PSDA Accuracy: {metrics.accuracy_score(y, y_pred_psda):.3f}")
+    print(f"TRCA Accuracy: {metrics.accuracy_score(y, y_pred_trca):.3f}")
