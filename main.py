@@ -3,6 +3,7 @@ from scipy import signal
 from scipy.linalg import eigh
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 
 # MNE functions
 from mne import Epochs, find_events
@@ -13,8 +14,9 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn import metrics
 from sklearn.metrics import confusion_matrix
 
+
 # Constants
-FREQ_N = [1024, 257, 1024]
+FREQ_N = [1024, 257, 769]
 FREQUENCIES = [9, 10, 12, 15]
 LENGTH_S = [7, 1, 3]
 
@@ -47,7 +49,7 @@ class PSDAClassifier(BaseEstimator, ClassifierMixin):
                 if self.length == LENGTH_S[1]:
                     nperseg = FREQ_N[1]
                 elif self.length == LENGTH_S[2]:
-                    nperseg = FREQ_N[0]
+                    nperseg = FREQ_N[2]
                 peak_freq = peak_psd(epoch[ch], self.fs, nperseg=nperseg)
                 for freq in self.target_freqs:
                     harmonics = [freq, freq * 2, freq / 2]
@@ -89,7 +91,9 @@ def plot_confusion_matrix(y_true, y_pred, title, frequencies):
     plt.tight_layout()
     return plt
 
+# `subject;session;algorithm;truth;prediction;epoch_length`
 
+results = []
 for length in LENGTH_S:
     # Processing loop
     for session in dataset:
@@ -121,6 +125,16 @@ for length in LENGTH_S:
         psda.fit(X, y)
         y_pred_psda = psda.predict(X)
 
+        # Save results
+        results.append({
+            'subject': subject,
+            'session': session_num,
+            'algorithm': 'PSDA',
+            'truth': ','.join(map(str, y.tolist())),
+            'prediction': ','.join(map(str, y_pred_psda.tolist())),
+            'epoch_length': length
+        })
+
         # Evaluation
         print("True Labels (all):   ", y.tolist())
         print("PSDA Predict (all):  ", y_pred_psda.tolist())
@@ -130,3 +144,6 @@ for length in LENGTH_S:
         # psda_cm_plot = plot_confusion_matrix(y, y_pred_psda, f'PSDA - subject:{subject}, session:{session_num}', FREQUENCIES)
         # Display plots in PyCharm's scientific view
         # plt.show()
+
+results_df = pd.DataFrame(results)
+results_df.to_csv('results_psda.csv', index=False)
