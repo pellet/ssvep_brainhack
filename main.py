@@ -1,6 +1,8 @@
 import numpy as np
 from scipy import signal
 from scipy.linalg import eigh
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # MNE functions
 from mne import Epochs, find_events
@@ -9,6 +11,7 @@ from mne.io import read_raw_edf
 # Machine learning
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn import metrics
+from sklearn.metrics import confusion_matrix
 
 # Constants
 FREQ_N = 1024
@@ -112,6 +115,19 @@ def load_data(edf_file_path):
     return raw
 
 
+# Create confusion matrices
+def plot_confusion_matrix(y_true, y_pred, title, frequencies):
+    cm = confusion_matrix(y_true, y_pred, labels=frequencies)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=frequencies, yticklabels=frequencies)
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.title(f'{title} Confusion Matrix')
+    plt.tight_layout()
+    return plt
+
+
 # Processing loop
 for session in dataset:
     subject = session['subject']
@@ -153,3 +169,9 @@ for session in dataset:
 
     print(f"PSDA Accuracy: {metrics.accuracy_score(y, y_pred_psda):.3f}")
     print(f"TRCA Accuracy: {metrics.accuracy_score(y, y_pred_trca):.3f}")
+
+    # Plot confusion matrices for both classifiers
+    psda_cm_plot = plot_confusion_matrix(y, y_pred_psda, f'PSDA - subject:{subject}, session:{session_num}', FREQUENCIES)
+    trca_cm_plot = plot_confusion_matrix(y, y_pred_trca, f'TRCA - subject:{subject}, session:{session_num}', FREQUENCIES)
+    # Display plots in PyCharm's scientific view
+    plt.show()
