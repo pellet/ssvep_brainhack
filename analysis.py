@@ -37,54 +37,73 @@ def plot_conf_matrix(y_true, y_pred, title, filename):
     plt.savefig(filename)
     plt.close()
 
-# 1. Per (subject, session, algorithm)
-for (subject, session, algorithm), group in results.groupby(['subject', 'session', 'algorithm']):
+# 1. Per (subject, session, algorithm, epoch_length)
+for (subject, session, algorithm, epoch_length), group in results.groupby(['subject', 'session', 'algorithm', 'epoch_length']):
     y_true = sum(group['truth'].apply(toi).tolist(), [])
     y_pred = sum(group['prediction'].apply(toi).tolist(), [])
-    fname = f"confusion_matrices/cm_subject-{subject}_session-{session}_alg-{algorithm}.png"
-    title = f"Confusion Matrix\nSubject: {subject}, Session: {session}, Algorithm: {algorithm}"
+    fname = f"confusion_matrices/cm_subject-{subject}_session-{session}_alg-{algorithm}_epoch-{epoch_length}.png"
+    title = f"Confusion Matrix\nSubject: {subject}, Session: {session}, Algorithm: {algorithm}, Epoch: {epoch_length}"
     plot_conf_matrix(y_true, y_pred, title, fname)
 
-# 2. Per (subject, algorithm)
-for (subject, algorithm), group in results.groupby(['subject', 'algorithm']):
+# 2. Per (subject, algorithm, epoch_length)
+for (subject, algorithm, epoch_length), group in results.groupby(['subject', 'algorithm', 'epoch_length']):
     y_true = sum(group['truth'].apply(toi).tolist(), [])
     y_pred = sum(group['prediction'].apply(toi).tolist(), [])
-    fname = f"confusion_matrices/cm_subject-{subject}_alg-{algorithm}.png"
-    title = f"Confusion Matrix\nSubject: {subject}, Algorithm: {algorithm}"
+    fname = f"confusion_matrices/cm_subject-{subject}_alg-{algorithm}_epoch-{epoch_length}.png"
+    title = f"Confusion Matrix\nSubject: {subject}, Algorithm: {algorithm}, Epoch: {epoch_length}"
     plot_conf_matrix(y_true, y_pred, title, fname)
 
-# 3. Per algorithm (overall)
-for algorithm, group in results.groupby('algorithm'):
+# 3. Per (algorithm, epoch_length)
+for (algorithm, epoch_length), group in results.groupby(['algorithm', 'epoch_length']):
     y_true = sum(group['truth'].apply(toi).tolist(), [])
     y_pred = sum(group['prediction'].apply(toi).tolist(), [])
-    fname = f"confusion_matrices/cm_algorithm-{algorithm}.png"
-    title = f"Confusion Matrix\nAlgorithm: {algorithm}"
+    fname = f"confusion_matrices/cm_algorithm-{algorithm}_epoch-{epoch_length}.png"
+    title = f"Confusion Matrix\nAlgorithm: {algorithm}, Epoch: {epoch_length}"
     plot_conf_matrix(y_true, y_pred, title, fname)
 
 
-# 4. Plot accuracy per algorithm
-plt.figure(figsize=(10, 6))
+# Set seaborn style
+sns.set(style="whitegrid")
 
-# Scatter plot of accuracy per (session, algorithm)
-sns.stripplot(
-    data=results,
-    x="algorithm",
-    y="accuracy",
-    hue="session",
-    jitter=True,
-    dodge=True,
-    alpha=0.7
+# Create FacetGrid — do NOT set hue here!
+g = sns.FacetGrid(
+    results,
+    col="epoch_length",
+    col_wrap=3,
+    height=5,
+    sharey=True
 )
 
-# Plot medians per algorithm
-medians = results.groupby('algorithm')['accuracy'].median()
-for i, alg in enumerate(medians.index):
-    plt.plot(i, medians[alg], marker='D', color='black', markersize=8, label=None if i else 'Median')
+def scatter_with_subjects_and_median(data, **kwargs):
+    # Scatterplot with both hue and style inside the function
+    sns.scatterplot(
+        data=data,
+        x="algorithm",
+        y="f1",
+        hue="session",
+        style="subject",
+        alpha=0.7,
+        s=100,
+        **kwargs
+    )
 
-plt.title("Accuracy per Algorithm per Session")
-plt.ylabel("Accuracy")
-plt.xlabel("Algorithm")
-plt.legend(title="Session", bbox_to_anchor=(1.05, 1), loc='upper left')
-plt.tight_layout()
-plt.savefig("accuracy_scatter_per_algorithm.png")
+    # Plot medians
+    medians = data.groupby("algorithm")["f1"].median()
+    for i, alg in enumerate(medians.index):
+        plt.plot(i, medians[alg], marker='D', color='black', markersize=8, label=None)
+
+    # Deduplicate legend entries
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    plt.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
+
+# Apply the plotting function
+g.map_dataframe(scatter_with_subjects_and_median)
+
+# Final styling
+g.set_titles(col_template="Epoch Length: {col_name}")
+g.set_axis_labels("Algorithm", "F1 Score")
+g.tight_layout()
+plt.legend()
+g.savefig("f1_scatter_per_algorithm_by_epoch_and_subject.png")
 plt.close()
