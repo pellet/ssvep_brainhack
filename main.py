@@ -145,9 +145,10 @@ for session in dataset:
     for i in range(len(events)):
         events[i][2] = 3 - (i % 4)
 
-    epochs = Epochs(raw, events=events, event_id=[0, 1, 2, 3],
+    event_id = {'9 Hz': 3, '10 Hz': 2, '12 Hz': 1, '15 Hz': 0}
+    epochs = Epochs(raw, events=events, event_id=event_id,
                     tmin=0, tmax=7, baseline=None, preload=True,
-                    verbose=False, picks=[1, 2, 3, 4, 5, 6, 7, 8])
+                    verbose=False, picks=['PO7', 'PO3', 'POz', 'PO4', 'PO8', 'O1', 'Oz', 'O2'])
 
     X = epochs.get_data()  # (n_epochs, n_channels, n_samples)
     y = np.array([FREQUENCIES[event[2]] for event in epochs.events])
