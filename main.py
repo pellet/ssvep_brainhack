@@ -14,11 +14,12 @@ from sklearn import metrics
 from sklearn.metrics import confusion_matrix
 
 # Constants
-FREQ_N = 1024
+FREQ_N = [1024, 257, 1024]
 FREQUENCIES = [9, 10, 12, 15]
+LENGTH_S = [7, 1, 3]
 
-def peak_psd(epoch, fs):
-    f, Pxx = signal.welch(epoch, fs, nperseg=FREQ_N)
+def peak_psd(epoch, fs, nperseg=FREQ_N[0]):
+    f, Pxx = signal.welch(epoch, fs, nperseg=nperseg)
     mask = (f >= 8.5) & (f <= 30.5)
     f_range = f[mask]
     Pxx_range = Pxx[mask]
@@ -26,9 +27,10 @@ def peak_psd(epoch, fs):
     return peak_freq
 
 class PSDAClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, fs, target_freqs):
+    def __init__(self, fs, target_freqs, length=7):
         self.fs = fs
         self.target_freqs = target_freqs
+        self.length = length
 
     def fit(self, X, y):
         self.X_ = X
@@ -41,7 +43,12 @@ class PSDAClassifier(BaseEstimator, ClassifierMixin):
         for epoch in X:
             error = {freq: 0.0 for freq in self.target_freqs}
             for ch in range(epoch.shape[0]):
-                peak_freq = peak_psd(epoch[ch], self.fs)
+                nperseg = FREQ_N[0]
+                if self.length == LENGTH_S[1]:
+                    nperseg = FREQ_N[1]
+                elif self.length == LENGTH_S[2]:
+                    nperseg = FREQ_N[0]
+                peak_freq = peak_psd(epoch[ch], self.fs, nperseg=nperseg)
                 for freq in self.target_freqs:
                     harmonics = [freq, freq * 2, freq / 2]
                     distances = [abs(peak_freq - h) for h in harmonics]
@@ -83,42 +90,43 @@ def plot_confusion_matrix(y_true, y_pred, title, frequencies):
     return plt
 
 
-# Processing loop
-for session in dataset:
-    subject = session['subject']
-    session_num = session['session']
-    edf_file_path = session['path']
+for length in LENGTH_S:
+    # Processing loop
+    for session in dataset:
+        subject = session['subject']
+        session_num = session['session']
+        edf_file_path = session['path']
 
-    print(f"\nProcessing Subject {subject}, Session {session_num}")
-    raw = load_data(edf_file_path)
-    fs = int(raw.info['sfreq'])
+        print(f"\nProcessing Subject {subject}, Session {session_num}")
+        raw = load_data(edf_file_path)
+        fs = int(raw.info['sfreq'])
 
-    events = find_events(raw, stim_channel='stim', verbose=False)
+        events = find_events(raw, stim_channel='stim', verbose=False)
 
-    # Map stimulus order to FREQUENCIES
-    for i in range(len(events)):
-        events[i][2] = 3 - (i % 4)
+        # Map stimulus order to FREQUENCIES
+        for i in range(len(events)):
+            events[i][2] = 3 - (i % 4)
 
-    event_id = {'9 Hz': 3, '10 Hz': 2, '12 Hz': 1, '15 Hz': 0}
-    epochs = Epochs(raw, events=events, event_id=event_id,
-                    tmin=0, tmax=7, baseline=None, preload=True,
-                    verbose=False, picks=['PO7', 'PO3', 'POz', 'PO4', 'PO8', 'O1', 'Oz', 'O2'])
+        event_id = {'9 Hz': 3, '10 Hz': 2, '12 Hz': 1, '15 Hz': 0}
+        epochs = Epochs(raw, events=events, event_id=event_id,
+                        tmin=0, tmax=length, baseline=None, preload=True,
+                        verbose=False, picks=['PO7', 'PO3', 'POz', 'PO4', 'PO8', 'O1', 'Oz', 'O2'])
 
-    X = epochs.get_data()  # (n_epochs, n_channels, n_samples)
-    y = np.array([FREQUENCIES[event[2]] for event in epochs.events])
-    n_samples = X.shape[0]
+        X = epochs.get_data()  # (n_epochs, n_channels, n_samples)
+        y = np.array([FREQUENCIES[event[2]] for event in epochs.events])
+        n_samples = X.shape[0]
 
-    # PSDA: train and test on full
-    psda = PSDAClassifier(fs=fs, target_freqs=FREQUENCIES)
-    psda.fit(X, y)
-    y_pred_psda = psda.predict(X)
+        # PSDA: train and test on full
+        psda = PSDAClassifier(fs=fs, target_freqs=FREQUENCIES, length=length)
+        psda.fit(X, y)
+        y_pred_psda = psda.predict(X)
 
-    # Evaluation
-    print("True Labels (all):   ", y.tolist())
-    print("PSDA Predict (all):  ", y_pred_psda.tolist())
-    print("PSDA Accuracy (all): ", metrics.accuracy_score(y, y_pred_psda))
+        # Evaluation
+        print("True Labels (all):   ", y.tolist())
+        print("PSDA Predict (all):  ", y_pred_psda.tolist())
+        print("PSDA Accuracy (all): ", metrics.accuracy_score(y, y_pred_psda))
 
-    # Plot confusion matrices for both classifiers
-    psda_cm_plot = plot_confusion_matrix(y, y_pred_psda, f'PSDA - subject:{subject}, session:{session_num}', FREQUENCIES)
-    # Display plots in PyCharm's scientific view
-    plt.show()
+        # Plot confusion matrices for both classifiers
+        # psda_cm_plot = plot_confusion_matrix(y, y_pred_psda, f'PSDA - subject:{subject}, session:{session_num}', FREQUENCIES)
+        # Display plots in PyCharm's scientific view
+        # plt.show()
