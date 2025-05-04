@@ -99,6 +99,19 @@ dataset = [
     {'subject': 2, 'session': 2, 'path': 'data/subject_2_fvep_led_training_2.EDF'}
 ]
 
+
+def load_data(edf_file_path):
+    # Set appropriate channel types for non-EEG channels
+    raw = read_raw_edf(edf_file_path, preload=True, verbose=False, stim_channel=9, misc=[0, 10])
+    # Assign the correct channel names
+    new_channel_names = ['sample time', 'PO7', 'PO3', 'POz', 'PO4', 'PO8', 'O1', 'Oz', 'O2', 'stim',
+                         'lda classification']
+    raw.rename_channels(dict(zip(raw.ch_names, new_channel_names)))
+
+    raw.set_montage('standard_1020')
+    return raw
+
+
 # Processing loop
 for session in dataset:
     subject = session['subject']
@@ -106,10 +119,11 @@ for session in dataset:
     edf_file_path = session['path']
 
     print(f"\nProcessing Subject {subject}, Session {session_num}")
-    raw = read_raw_edf(edf_file_path, preload=True, verbose=False)
+    raw = load_data(edf_file_path)
+    print(raw.info)
     fs = int(raw.info['sfreq'])
 
-    events = find_events(raw, stim_channel='10', verbose=False)
+    events = find_events(raw, stim_channel='stim', verbose=False)
 
     # Map stimulus order to FREQUENCIES
     for i in range(len(events)):
